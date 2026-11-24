@@ -57,23 +57,54 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
+useEffect(() => {
     fetchData();
 
-    const ws = new WebSocket(WS_URL);
-    ws.onopen = () => setWsConnected(true);
-    ws.onclose = () => setWsConnected(false);
-    ws.onmessage = (event) => {
-      const newLog: AccessLog = JSON.parse(event.data);
-      setLogs((prev) => [newLog, ...prev.slice(0, 29)]);
-      if (newLog.status === 'COMPLETED') {
-        fetch(`${API_BASE}/api/v1/users`)
-          .then((r) => r.json())
-          .then(setUsers);
-      }
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let isMounted = true;
+
+    const connectWebSocket = () => {
+      if (!isMounted) return;
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        if (isMounted) setWsConnected(true);
+      };
+
+      ws.onclose = () => {
+        if (isMounted) {
+          setWsConnected(false);
+          reconnectTimer = setTimeout(connectWebSocket, 2000);
+        }
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+
+      ws.onmessage = (event) => {
+        const newLog: AccessLog = JSON.parse(event.data);
+        setLogs((prev) => [newLog, ...prev.slice(0, 29)]);
+        if (newLog.status === 'COMPLETED') {
+          fetch(`${API_BASE}/api/v1/users`)
+            .then((r) => r.json())
+            .then(setUsers);
+        }
+      };
     };
 
-    return () => ws.close();
+    // Short delay avoids React StrictMode closing the socket before handshake finishes
+    const initTimer = setTimeout(connectWebSocket, 100);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(initTimer);
+      clearTimeout(reconnectTimer);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
   }, []);
 
   const handleTopUp = async (e: React.FormEvent) => {
